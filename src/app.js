@@ -14,6 +14,8 @@ let feeSearch = '';
 let feeClassFilter = '';
 let feeRouteFilter = '';
 let feeView = 'students';
+let reportClassFilter = '';
+let reportMediumFilter = '';
 let resultDraft = null;
 let resultSubjectClass = '';
 let isBusy = false;
@@ -368,7 +370,10 @@ function feeProfileTable() {
 }
 
 function feeReportsPanel() {
-  const records = feeProfileRecords();
+  const allRecords = feeProfileRecords();
+  const classes = [...new Set(allRecords.map(({ student }) => student.class).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  const mediums = [...new Set(allRecords.map(({ student }) => student.medium || 'हिंदी').filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
+  const records = allRecords.filter(({ student }) => (!reportClassFilter || student.class === reportClassFilter) && (!reportMediumFilter || (student.medium || 'हिंदी') === reportMediumFilter));
   const totalFee = records.reduce((sum, row) => sum + row.total, 0);
   const totalPaid = records.reduce((sum, row) => sum + row.currentPaid, 0);
   const totalDue = records.reduce((sum, row) => sum + Math.max(0, row.due), 0);
@@ -379,24 +384,35 @@ function feeReportsPanel() {
   for (const row of records) byClass.set(row.student.class || 'Other', (byClass.get(row.student.class || 'Other') || 0) + Math.max(0, row.due));
   const classRows = [...byClass.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true }));
   const maxClassDue = Math.max(1, ...classRows.map(([, amount]) => amount));
-  const classChart = classRows.length ? classRows.map(([className, amount]) => `<div style="display:grid;grid-template-columns:62px 1fr auto;align-items:center;gap:10px;margin:10px 0"><strong class="small">${escapeHTML(className)}</strong><div style="height:10px;border-radius:99px;background:#edf1f6;overflow:hidden"><div style="height:100%;width:${amount ? Math.max(2, amount / maxClassDue * 100) : 0}%;background:#d88938;border-radius:99px"></div></div><span class="small currency">₹${money(amount)}</span></div>`).join('') : `<div class="empty-state"><p>Fee data import करें, फिर class-wise outstanding यहाँ दिखेगा।</p></div>`;
+  const classChart = classRows.length ? classRows.map(([className, amount]) => `<div style="display:grid;grid-template-columns:62px 1fr auto;align-items:center;gap:10px;margin:10px 0"><strong class="small">${escapeHTML(className)}</strong><div style="height:10px;border-radius:99px;background:#edf1f6;overflow:hidden"><div style="height:100%;width:${amount ? Math.max(2, amount / maxClassDue * 100) : 0}%;background:#d88938;border-radius:99px"></div></div><span class="small currency">₹${money(amount)}</span></div>`).join('') : `<div class="empty-state"><p>No matching fee profiles. Import fee data or change the filters.</p></div>`;
   const now = new Date();
   const months = Array.from({ length: 6 }, (_, index) => {
     const date = new Date(now.getFullYear(), now.getMonth() - 5 + index, 1);
     return { key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`, label: new Intl.DateTimeFormat('en-IN', { month: 'short' }).format(date), amount: 0 };
   });
   const monthMap = new Map(months.map((month) => [month.key, month]));
+  const allowedStudentIds = new Set(records.map(({ student }) => student.id));
+  const filteredReports = Boolean(reportClassFilter || reportMediumFilter);
   for (const entry of Shala.feeLedger) {
     if (entry.session && String(entry.session) !== String(Shala.settings.academicSession)) continue;
+    if (filteredReports && (!entry.studentId || !allowedStudentIds.has(entry.studentId))) continue;
     let key = String(entry.date || '').slice(0, 7);
     if (!/^\d{4}-\d{2}$/.test(key) && entry.createdAt) key = new Date(Number(entry.createdAt)).toISOString().slice(0, 7);
     if (monthMap.has(key)) monthMap.get(key).amount += Number(entry.amount) || 0;
   }
   const maxMonth = Math.max(1, ...months.map((month) => month.amount));
   const monthChart = months.map((month) => `<div title="${escapeAttr(month.label)} · ₹${money(month.amount)}" style="height:100%;flex:1;min-width:38px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px"><span class="small muted">₹${money(month.amount)}</span><div style="height:${month.amount ? Math.max(4, month.amount / maxMonth * 68) : 2}%;min-height:${month.amount ? 8 : 2}px;width:28px;background:#2f8b69;border-radius:7px 7px 2px 2px"></div><span class="small muted">${escapeHTML(month.label)}</span></div>`).join('');
-  return `<div class="section-stack"><div class="grid-stats"><div class="stat-card amber"><div class="stat-top"><span class="stat-label">Outstanding</span><span class="stat-icon">₹</span></div><div class="stat-value">₹${money(totalDue)}</div><div class="stat-foot">${dueCount} students with due</div></div><div class="stat-card green"><div class="stat-top"><span class="stat-label">Paid this session</span><span class="stat-icon">✓</span></div><div class="stat-value">₹${money(totalPaid)}</div><div class="stat-foot">Imported opening paid + approved payments</div></div><div class="stat-card"><div class="stat-top"><span class="stat-label">Fee profiles</span><span class="stat-icon">▤</span></div><div class="stat-value">${records.length}</div><div class="stat-foot">${settledCount} settled · session ${escapeHTML(Shala.settings.academicSession)}</div></div></div>
-    <div class="dashboard-grid"><section class="card"><div class="card-header"><div><h2>Outstanding by class</h2><p>Current balance due, live from student profiles.</p></div></div><div class="card-body">${classChart}</div></section><section class="card"><div class="card-header"><div><h2>Collections by month</h2><p>Approved transactions recorded in the last six months.</p></div></div><div class="card-body"><div style="height:190px;display:flex;align-items:stretch;gap:8px;border-bottom:1px solid #e5eaf1;padding:0 4px">${monthChart}</div><p class="small muted" style="margin:10px 0 0">Imported “PAID” totals have no receipt date, so they are not assigned to a month.</p></div></section></div>
-    <section class="card"><div class="card-header"><div><h2>Collection analysis</h2><p>Current-session fee collected against imported school and transport charges.</p></div><strong>${collectionRate.toFixed(1)}%</strong></div><div class="card-body"><div style="height:12px;border-radius:99px;background:#edf1f6;overflow:hidden"><div style="height:100%;width:${collectionRate}%;background:#2f8b69;border-radius:99px"></div></div><div class="toolbar" style="justify-content:space-between;margin-top:10px"><span class="small muted">Collected ₹${money(totalPaid)}</span><span class="small muted">Charged ₹${money(totalFee)}</span><span class="small muted">Outstanding ₹${money(totalDue)}</span></div></div></section></div>`;
+  const studentRows = records.length ? records.map(({ student, profile, schoolFee, transportFee, currentPaid, due }) => {
+    const reminder = due > 0 && profile.parentMobile
+      ? `<button class="btn btn-success btn-sm" data-action="fee-whatsapp-reminder" data-id="${escapeAttr(student.id)}">WhatsApp reminder</button>`
+      : due > 0 ? `<span class="badge amber">Mobile missing</span>` : `<span class="badge green">Settled</span>`;
+    return `<tr><td>${escapeHTML(profile.admissionNo || student.srNo || '—')}</td><td class="primary-cell">${escapeHTML(student.name)}<br><span class="small muted">${escapeHTML(student.fatherName || '')}</span></td><td>${escapeHTML(student.class || '—')}</td><td>${escapeHTML(student.medium || 'हिंदी')}</td><td class="numeric currency">₹${money(schoolFee + transportFee)}</td><td class="numeric currency">₹${money(profile.paidBeforeSoftware)}</td><td class="numeric currency">₹${money(currentPaid)}</td><td class="numeric currency">₹${money(due)}</td><td>${reminder}</td></tr>`;
+  }).join('') : `<tr><td colspan="9"><div class="empty-state"><p>No students match this class/medium selection.</p></div></td></tr>`;
+  return `<div class="section-stack"><section class="card"><div class="card-header"><div><h2>Fee reports · individual student status</h2><p>Select class and medium to see each matching student’s fee balance and reminder.</p></div><span class="badge blue">${records.length} students</span></div><div class="card-body"><div class="toolbar"><div class="field"><label for="fee-report-class">Class</label><select id="fee-report-class" class="control"><option value="">All classes</option>${classes.map((item) => `<option value="${escapeAttr(item)}" ${selected(reportClassFilter, item)}>${escapeHTML(item)}</option>`).join('')}</select></div><div class="field"><label for="fee-report-medium">Medium</label><select id="fee-report-medium" class="control"><option value="">All mediums</option>${mediums.map((item) => `<option value="${escapeAttr(item)}" ${selected(reportMediumFilter, item)}>${escapeHTML(item)}</option>`).join('')}</select></div><button class="btn btn-secondary btn-sm" type="button" data-action="clear-fee-report-filters">Clear filters</button></div></div></section>
+    <div class="grid-stats"><div class="stat-card amber"><div class="stat-top"><span class="stat-label">Outstanding</span><span class="stat-icon">₹</span></div><div class="stat-value">₹${money(totalDue)}</div><div class="stat-foot">${dueCount} students with due</div></div><div class="stat-card green"><div class="stat-top"><span class="stat-label">Paid this session</span><span class="stat-icon">✓</span></div><div class="stat-value">₹${money(totalPaid)}</div><div class="stat-foot">Imported opening paid + approved payments</div></div><div class="stat-card"><div class="stat-top"><span class="stat-label">Fee profiles</span><span class="stat-icon">▤</span></div><div class="stat-value">${records.length}</div><div class="stat-foot">${settledCount} settled · session ${escapeHTML(Shala.settings.academicSession)}</div></div></div>
+    <div class="dashboard-grid"><section class="card"><div class="card-header"><div><h2>Outstanding by class</h2><p>Filtered balances, live from fee profiles.</p></div></div><div class="card-body">${classChart}</div></section><section class="card"><div class="card-header"><div><h2>Collections by month</h2><p>Approved transactions recorded in the last six months.</p></div></div><div class="card-body"><div style="height:190px;display:flex;align-items:stretch;gap:8px;border-bottom:1px solid #e5eaf1;padding:0 4px">${monthChart}</div><p class="small muted" style="margin:10px 0 0">Imported “PAID” totals have no receipt date, so they are not assigned to a month.</p></div></section></div>
+    <section class="card"><div class="card-header"><div><h2>Collection analysis</h2><p>Current-session fee collected against selected students’ school and transport charges.</p></div><strong>${collectionRate.toFixed(1)}%</strong></div><div class="card-body"><div style="height:12px;border-radius:99px;background:#edf1f6;overflow:hidden"><div style="height:100%;width:${collectionRate}%;background:#2f8b69;border-radius:99px"></div></div><div class="toolbar" style="justify-content:space-between;margin-top:10px"><span class="small muted">Collected ₹${money(totalPaid)}</span><span class="small muted">Charged ₹${money(totalFee)}</span><span class="small muted">Outstanding ₹${money(totalDue)}</span></div></div></section>
+    <section class="card"><div class="card-header"><div><h2>Individual fee status</h2><p>WhatsApp reminder opens a draft for the selected student; staff presses Send.</p></div><span class="badge">${records.length} rows</span></div><div class="card-body"><div class="table-wrap"><table class="data-table"><thead><tr><th>Adm No</th><th>Student / Father</th><th>Class</th><th>Medium</th><th>Total fee</th><th>Paid before software</th><th>Paid this session</th><th>Balance due</th><th>Reminder</th></tr></thead><tbody>${studentRows}</tbody></table></div></div></section></div>`;
 }
 
 function feeRequestForm() {
@@ -809,6 +825,12 @@ async function handleClick(event) {
     render();
     return;
   }
+  if (action === 'clear-fee-report-filters') {
+    reportClassFilter = '';
+    reportMediumFilter = '';
+    render();
+    return;
+  }
   if (action === 'fee-whatsapp-reminder') {
     const record = feeProfileRecords().find((row) => row.student.id === id);
     if (!record || record.due <= 0) { toast('इस विद्यार्थी की फीस बकाया नहीं है।', 'error'); return; }
@@ -936,6 +958,16 @@ function handleChange(event) {
   if (target.id === 'fee-route-filter') {
     feeRouteFilter = target.value;
     updateFeeProfileTable();
+    return;
+  }
+  if (target.id === 'fee-report-class') {
+    reportClassFilter = target.value;
+    render();
+    return;
+  }
+  if (target.id === 'fee-report-medium') {
+    reportMediumFilter = target.value;
+    render();
     return;
   }
   if (target.id === 'result-class') {
