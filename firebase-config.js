@@ -1,11 +1,13 @@
 // Firebase Web App configuration. These values identify your Firebase project;
 // they are not service-account secrets. Replace the placeholders using the setup guide.
 export const firebaseConfig = {
-  apiKey: "REPLACE_WITH_FIREBASE_WEB_API_KEY",
-  authDomain: "REPLACE_WITH_PROJECT_ID.firebaseapp.com",
-  databaseURL: "https://REPLACE_WITH_DATABASE_URL",
-  projectId: "REPLACE_WITH_PROJECT_ID",
-  appId: "REPLACE_WITH_FIREBASE_APP_ID"
+  apiKey: "AIzaSyBuQaOVX0Z5YQIQ1wFhVSLpKR092mM2g6M",
+  authDomain: "bssr-8815d.firebaseapp.com",
+  databaseURL: "https://bssr-8815d-default-rtdb.firebaseio.com",
+  projectId: "bssr-8815d",
+  storageBucket: "bssr-8815d.firebasestorage.app",
+  messagingSenderId: "1071519059072",
+  appId: "1:1071519059072:web:a67cb9f53a416249e3ea65"
 };
 
 // Keep the same schoolId in the Firebase database seed and the security rules setup.
