@@ -262,7 +262,7 @@ function resultArchiveItems() {
 function resultsPanel() {
   ensureResultDraft();
   const draft = resultDraft;
-  const subjects = draft.subjects.map((subject, index) => `<span class="badge blue" style="padding:7px 9px">${escapeHTML(subject.name)} · max ${Number(subject.max) || 100}<button class="icon-btn" style="height:22px;width:22px;margin-left:4px" data-action="remove-subject" data-index="${index}" aria-label="Remove subject">×</button></span>`).join('');
+  const subjects = draft.subjects.map((subject, index) => `<span class="badge blue" style="padding:7px 9px">${escapeHTML(subject.name)} · max ${Number(subject.max) || 100}<button class="icon-btn" style="height:22px;width:22px;margin-left:4px" data-action="edit-subject-max" data-index="${index}" title="Change maximum marks" aria-label="Change max marks for ${escapeAttr(subject.name)}">✎</button><button class="icon-btn" style="height:22px;width:22px;margin-left:2px" data-action="remove-subject" data-index="${index}" aria-label="Remove subject">×</button></span>`).join('');
   const students = studentsForResult();
   return `${pageHeading('परीक्षा परिणाम', 'अंक भरें—कुल, प्रतिशत, grade और rank स्वतः गणना होंगे। Publish के बाद principal dashboard पर भी दिखेगा।')}${demoBanner()}
     <div class="section-stack">
@@ -273,7 +273,7 @@ function resultsPanel() {
             <div class="field"><label for="result-medium">माध्यम / Medium</label><select id="result-medium" class="control"><option value="हिंदी" ${selected(draft.medium, 'हिंदी')}>हिंदी</option><option value="English" ${selected(draft.medium, 'English')}>English</option></select></div>
             <div class="field"><label for="result-title">परीक्षा का नाम</label><input id="result-title" class="control" value="${escapeAttr(draft.title)}" placeholder="वार्षिक परीक्षा 2026-27"></div>
           </div>
-          <div class="toolbar" style="justify-content:space-between;margin-bottom:12px"><div class="toolbar"><span class="small muted" style="font-weight:800">विषय और पूर्णांक:</span>${subjects}</div><button class="btn btn-secondary btn-sm" data-action="add-subject">＋ विषय जोड़ें</button></div>
+          <div class="toolbar" style="justify-content:space-between;margin-bottom:12px"><div class="toolbar"><span class="small muted" style="font-weight:800">विषय और पूर्णांक / Subject max marks:</span>${subjects}<span class="small muted">✎ से max बदलें</span></div><button class="btn btn-secondary btn-sm" data-action="add-subject">＋ विषय जोड़ें</button></div>
           <div class="table-wrap result-grid-wrap"><table class="data-table marks-table"><thead><tr><th>Roll</th><th>SR</th><th>विद्यार्थी</th>${draft.subjects.map((subject) => `<th>${escapeHTML(subject.name)}<br><span class="muted">max ${Number(subject.max) || 100}</span></th>`).join('')}<th>Total</th><th>%</th><th>Grade</th><th>Rank</th></tr></thead><tbody id="result-grid-body">${resultGridRows()}</tbody></table></div>
           <div class="toolbar" style="justify-content:space-between;margin-top:14px"><div class="summary-strip"><span class="summary-chip">Pass <b id="result-pass">0</b></span><span class="summary-chip">Review <b id="result-fail">0</b></span><span class="summary-chip">Class average <b id="result-average">0%</b></span><span class="summary-chip">Topper <b id="result-topper">—</b></span></div><button class="btn btn-primary" data-action="save-result" ${disabled(!canEditStudents())}>Publish result →</button></div>
           ${!canEditStudents() ? `<p class="field-hint" style="margin-top:10px">केवल शिक्षक या प्रधानाचार्य परिणाम बना/प्रकाशित कर सकते हैं।</p>` : ''}
@@ -295,6 +295,31 @@ function feeRequestCards({ dashboard = false } = {}) {
 function feeLedgerTable() {
   if (!Shala.feeLedger.length) return `<div class="empty-state"><div class="empty-icon">₹</div><h3>अभी ledger खाली है</h3><p>Approved fee requests यहाँ रिकॉर्ड होंगी।</p></div>`;
   return `<div class="table-wrap"><table class="data-table"><thead><tr><th>दिनांक</th><th>विद्यार्थी</th><th>कक्षा</th><th class="right">राशि</th><th>Approved by</th></tr></thead><tbody>${Shala.feeLedger.map((record) => `<tr><td>${escapeHTML(niceDate(record.date || record.createdAt))}</td><td class="primary-cell">${escapeHTML(record.studentName)}</td><td>${escapeHTML(record.class || '—')} · ${escapeHTML(record.medium || '—')}</td><td class="numeric currency">₹${money(record.amount)}</td><td>${escapeHTML(record.approvedBy || '—')}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function feeProfileImportPanel() {
+  if (!isPrincipal()) return '';
+  return `<section class="card"><div class="card-header"><div><h2>विद्यार्थी फीस CSV Import</h2><p>Excel से fee structure, current paid और balance import करें।</p></div><span class="badge blue">Principal only</span></div><div class="card-body section-stack">
+    <div class="notice-box info">Excel में <strong>Save As → CSV UTF-8</strong> करें। Sheet का Admission No app के student <strong>SR number</strong> से match होना चाहिए। जरूरी headers: Admission No, Student Name, School Fee, Annual Transport Fee, PAID BEFORE SOFTWARE, PAID, Current Session. Current balance = School Fee + Transport Fee − PAID; “PAID BEFORE SOFTWARE” अलग historical amount रहेगा। Import/re-import matched students की fee snapshot बदल देगा; हर row में अलग receipt नहीं बनेगी।</div>
+    <form data-form="fee-import" class="section-stack"><div class="field"><label>Fee CSV file चुनें</label><input class="control" type="file" accept=".csv,text/csv" data-fee-import-file></div><div class="field"><label>या CSV text paste करें</label><textarea class="control control-textarea" name="feeCsv" rows="4" placeholder="admissionNo,studentName,pickupPoint,schoolFee,annualTransportFee,paidBeforeSoftware,paid,currentSessionBalance"></textarea></div><div class="toolbar"><button class="btn btn-secondary" type="button" data-action="download-fee-template">⬇ CSV template</button><button class="btn btn-primary" type="submit">Import fee data</button></div></form>
+  </div></section>`;
+}
+
+function feeProfileTable() {
+  const students = Shala.students.filter((student) => student.feeProfile && typeof student.feeProfile === 'object')
+    .sort((a, b) => String(a.class).localeCompare(String(b.class), undefined, { numeric: true }) || String(a.name).localeCompare(String(b.name)));
+  if (!students.length) return `<section class="card"><div class="card-header"><div><h2>Student fee balances</h2><p>Imported fee structure and current-session balance.</p></div><span class="badge">0 profiles</span></div><div class="card-body"><div class="empty-state"><div class="empty-icon">₹</div><h3>अभी fee profile import नहीं हुई</h3><p>Principal CSV import से current session की fees और balance जोड़ें।</p></div></div></section>`;
+  const rows = students.map((student) => {
+    const profile = student.feeProfile;
+    const importedAt = Number(profile.importedAt) || 0;
+    const extraPaid = Shala.feeLedger.filter((entry) => entry.studentId === student.id && String(entry.session || '') === String(profile.session || '') && (Number(entry.createdAt) || 0) >= importedAt)
+      .reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0);
+    const total = (Number(profile.schoolFee) || 0) + (Number(profile.annualTransportFee) || 0);
+    const currentPaid = (Number(profile.paidCurrent) || 0) + extraPaid;
+    const due = total - currentPaid;
+    return `<tr><td>${escapeHTML(profile.admissionNo || student.srNo || '—')}</td><td class="primary-cell">${escapeHTML(student.name)}</td><td>${escapeHTML(student.class || '—')}</td><td>${escapeHTML(profile.pickupPoint || '—')}</td><td class="numeric currency">₹${money(profile.schoolFee)}</td><td class="numeric currency">₹${money(profile.annualTransportFee)}</td><td class="numeric currency">₹${money(profile.paidBeforeSoftware)}</td><td class="numeric currency">₹${money(currentPaid)}</td><td class="numeric currency ${due > 0 ? 'currency' : ''}">₹${money(due)}</td></tr>`;
+  }).join('');
+  return `<section class="card"><div class="card-header"><div><h2>Student fee structure & balance</h2><p>Current session · ${students.length} imported profiles. Later approved fee payments reduce the due automatically.</p></div><span class="badge blue">${escapeHTML(Shala.settings.academicSession)}</span></div><div class="card-body"><div class="table-wrap"><table class="data-table"><thead><tr><th>Adm No</th><th>Student</th><th>Class</th><th>Pickup point</th><th>School fee</th><th>Annual transport</th><th>Paid before software</th><th>Paid this session</th><th>Balance due</th></tr></thead><tbody>${rows}</tbody></table></div></div></section>`;
 }
 
 function feeRequestForm() {
@@ -320,7 +345,7 @@ function feesPanel({ dashboard = false } = {}) {
     <div class="stat-card"><div class="stat-top"><span class="stat-label">All requests</span><span class="stat-icon">▤</span></div><div class="stat-value">${Shala.feeRequests.length}</div><div class="stat-foot">Pending + processed</div></div>
     <div class="stat-card blue"><div class="stat-top"><span class="stat-label">Ledger entries</span><span class="stat-icon">✓</span></div><div class="stat-value">${Shala.feeLedger.length}</div><div class="stat-foot">Receipts recorded</div></div>
   </div>
-  <div class="section-stack">${feeRequestForm()}<section class="card"><div class="card-header"><div><h2>Approval queue</h2><p>Pending requests update here in real time.</p></div><span class="badge amber">${pendingCount} pending</span></div><div class="card-body">${feeRequestCards({ dashboard })}</div></section>
+  <div class="section-stack">${feeProfileImportPanel()}${feeProfileTable()}${feeRequestForm()}<section class="card"><div class="card-header"><div><h2>Approval queue</h2><p>Pending requests update here in real time.</p></div><span class="badge amber">${pendingCount} pending</span></div><div class="card-body">${feeRequestCards({ dashboard })}</div></section>
   <section class="card"><div class="card-header"><div><h2>Fee ledger</h2><p>Approved fee entries; CSV can be opened in Excel or Google Sheets.</p></div><button class="btn btn-secondary btn-sm" data-action="export-ledger">CSV Export</button></div><div class="card-body">${feeLedgerTable()}</div></section></div>`;
 }
 
@@ -609,6 +634,15 @@ async function handleSubmit(event) {
     });
     return;
   }
+  if (type === 'fee-import') {
+    await runAction(async () => {
+      const count = await Shala.importFeeSheetCSV(values.feeCsv);
+      form.reset();
+      render();
+      toast(`${count} विद्यार्थियों की fee structure और balance import हुई।`, 'success');
+    });
+    return;
+  }
   if (type === 'fee-request') {
     await runAction(async () => {
       const student = Shala.students.find((item) => item.id === values.studentId);
@@ -692,6 +726,11 @@ async function handleClick(event) {
   if (action === 'open-import') { modal = { type: 'import' }; render(); return; }
   if (action === 'export-students') { downloadStudentsCSV(); return; }
   if (action === 'export-ledger') { downloadLedgerCSV(); return; }
+  if (action === 'download-fee-template') {
+    const headers = ['admissionNo', 'studentName', 'pickupPoint', 'schoolFee', 'annualTransportFee', 'paidBeforeSoftware', 'paid', 'currentSessionBalance'];
+    downloadText('ShalaSetu_fee_import_template.csv', `\uFEFF${headers.map(csvCell).join(',')}\r\n`, 'text/csv;charset=utf-8');
+    return;
+  }
   if (action === 'export-backup') { await runAction(() => exportBackup(), 'JSON backup डाउनलोड शुरू हुआ।'); return; }
   if (action === 'add-subject') {
     const name = prompt('विषय का नाम लिखें:');
@@ -701,6 +740,19 @@ async function handleClick(event) {
     const max = Number(maxValue);
     if (!Number.isFinite(max) || max <= 0 || max > 1000) { toast('Max marks 1 से 1000 के बीच रखें।', 'error'); return; }
     ensureResultDraft().subjects.push({ name: name.trim(), max });
+    render();
+    return;
+  }
+  if (action === 'edit-subject-max') {
+    const subject = ensureResultDraft().subjects[Number(button.dataset.index)];
+    if (!subject) return;
+    const maxValue = prompt(`पूर्णांक / maximum marks for ${subject.name}:`, String(Number(subject.max) || 100));
+    if (maxValue === null) return;
+    const max = Number(maxValue);
+    if (!Number.isFinite(max) || max <= 0 || max > 1000) { toast('Max marks 1 से 1000 के बीच रखें।', 'error'); return; }
+    const hasOverLimitMark = Object.values(resultDraft.marks || {}).some((studentMarks) => Number(studentMarks?.[subject.name]) > max);
+    if (hasOverLimitMark) { toast(`पहले ${subject.name} के दर्ज अंक नए max ${max} से कम करें।`, 'error'); return; }
+    subject.max = max;
     render();
     return;
   }
@@ -788,6 +840,16 @@ function handleChange(event) {
     ensureResultDraft();
     resultDraft.medium = target.value;
     render();
+    return;
+  }
+  if (target.dataset.feeImportFile && target.files?.[0]) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const textarea = target.form?.querySelector('textarea[name="feeCsv"]');
+      if (textarea) textarea.value = String(reader.result || '');
+    };
+    reader.onerror = () => toast('Fee CSV file नहीं पढ़ सकी; CSV UTF-8 में फिर से save करें।', 'error');
+    reader.readAsText(target.files[0]);
     return;
   }
   if (target.dataset.fileCsv && target.files?.[0]) {

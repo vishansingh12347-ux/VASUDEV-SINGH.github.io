@@ -590,6 +590,104 @@ const Shala = {
     return records.length;
   },
 
+  async importFeeSheetCSV(csvText) {
+    assertRole('principal');
+    const rows = arrayFromCSV(csvText);
+    if (rows.length < 2) throw new Error('Fee CSV में header और कम से कम एक विद्यार्थी की row होनी चाहिए।');
+    const normalizeHeader = (value) => String(value || '').replace(/^\uFEFF/, '').trim().toLocaleLowerCase('en-IN').replace(/[\s_.,;:()₹-]+/g, '');
+    const header = rows.shift().map(normalizeHeader);
+    const findColumn = (aliases) => {
+      const normalized = aliases.map(normalizeHeader);
+      const exact = header.findIndex((item) => normalized.includes(item));
+      if (exact >= 0) return exact;
+      return header.findIndex((item) => normalized.some((alias) => alias.length >= 4 && item.includes(alias)));
+    };
+    const columns = {
+      admissionNo: findColumn(['admissionno', 'admno', 'admissionnumber', 'प्रवेशसं', 'प्रवेशसंख्या']),
+      studentName: findColumn(['studentname', 'छात्रकानाम']),
+      pickupPoint: findColumn(['pickuppoint', 'पिकअपपॉइंट']),
+      schoolFee: findColumn(['schoolfee', 'schoolfees', 'विद्यालयशुल्क']),
+      transportFee: findColumn(['annualtransportfee', 'transportfee', 'वार्षिकपरिवहनशुल्क']),
+      paidBeforeSoftware: findColumn(['paidbeforesoftware', 'paidbefore', 'softwareपहलेभुगतान']),
+      paidCurrent: findColumn(['paid', 'currentpaid', 'paidthissession', 'इससत्रजमा']),
+      currentBalance: findColumn(['currentsessionbalance', 'currentsession', 'चालूसत्रशेष'])
+    };
+    const required = ['admissionNo', 'studentName', 'schoolFee', 'transportFee', 'paidBeforeSoftware', 'paidCurrent', 'currentBalance'];
+    const missingHeaders = required.filter((key) => columns[key] < 0);
+    if (missingHeaders.length) throw new Error(`CSV में जरूरी column नहीं मिला: ${missingHeaders.join(', ')}. Excel को CSV UTF-8 में save करें और header row पहली row रखें।`);
+    if (!state.students.length) throw new Error('पहले Students में roster import करें। Fee sheet का Admission No app के Student SR number से match होना चाहिए।');
+
+    const normalizeId = (value) => String(value || '').trim().normalize('NFKC').toLocaleLowerCase('en-IN');
+    const parseMoney = (value, label, rowNumber) => {
+      let text = String(value ?? '').trim();
+      if (!text || ['-', '—', '–', 'na', 'n/a'].includes(text.toLocaleLowerCase('en-IN'))) return 0;
+      text = text.replace(/[₹,\s\u00a0]/g, '').replace(/[−–]/g, '-');
+      const parenthesized = /^\(.*\)$/.test(text);
+      if (parenthesized) text = `-${text.slice(1, -1)}`;
+      if (!/^-?\d+(?:\.\d{1,2})?$/.test(text)) throw new Error(`CSV row ${rowNumber}: ${label} की राशि पढ़ नहीं सकी (${value})।`);
+      return Number(text);
+    };
+    const byAdmission = new Map();
+    const ambiguous = new Set();
+    for (const student of state.students) {
+      const key = normalizeId(student.srNo);
+      if (!key) continue;
+      if (byAdmission.has(key)) ambiguous.add(key);
+      else byAdmission.set(key, student);
+    }
+    const importedAdmissions = new Set();
+    const records = [];
+    const errors = [];
+    const importedAt = Date.now();
+    const session = String(state.settings.academicSession || DEFAULT_SETTINGS.academicSession);
+    for (let index = 0; index < rows.length; index++) {
+      const values = rows[index];
+      const rowNumber = index + 2;
+      const admissionNo = String(values[columns.admissionNo] || '').trim();
+      const studentName = String(values[columns.studentName] || '').trim();
+      if (!admissionNo && !studentName) continue;
+      if (!admissionNo || !studentName) { errors.push(`row ${rowNumber}: Admission No और Student Name दोनों जरूरी हैं।`); continue; }
+      const key = normalizeId(admissionNo);
+      if (importedAdmissions.has(key)) { errors.push(`row ${rowNumber}: Admission No ${admissionNo} दो बार आया है।`); continue; }
+      importedAdmissions.add(key);
+      if (ambiguous.has(key)) { errors.push(`row ${rowNumber}: app में SR number ${admissionNo} duplicate है; पहले student roster ठीक करें।`); continue; }
+      const student = byAdmission.get(key);
+      if (!student) { errors.push(`row ${rowNumber}: Admission No ${admissionNo} किसी Student SR number से match नहीं हुआ।`); continue; }
+      try {
+        const schoolFee = parseMoney(values[columns.schoolFee], 'School Fee', rowNumber);
+        const annualTransportFee = parseMoney(values[columns.transportFee], 'Annual Transport Fee', rowNumber);
+        const paidBeforeSoftware = parseMoney(values[columns.paidBeforeSoftware], 'PAID BEFORE SOFTWARE', rowNumber);
+        const paidCurrent = parseMoney(values[columns.paidCurrent], 'PAID', rowNumber);
+        const currentBalance = parseMoney(values[columns.currentBalance], 'Current Session Balance', rowNumber);
+        if ([schoolFee, annualTransportFee, paidBeforeSoftware, paidCurrent].some((amount) => amount < 0)) throw new Error(`row ${rowNumber}: fee और paid amounts negative नहीं हो सकते।`);
+        const calculatedBalance = Math.round((schoolFee + annualTransportFee - paidCurrent) * 100) / 100;
+        if (Math.abs(calculatedBalance - currentBalance) > 1) throw new Error(`row ${rowNumber}: sheet balance ₹${currentBalance} है, लेकिन School Fee + Transport Fee − PAID = ₹${calculatedBalance} होना चाहिए।`);
+        const pickupPoint = columns.pickupPoint >= 0 ? String(values[columns.pickupPoint] || '').trim() : '';
+        records.push({ student, feeProfile: {
+          admissionNo, session, pickupPoint, schoolFee, annualTransportFee,
+          paidBeforeSoftware, paidCurrent, currentBalance,
+          importedAt, importedByUid: state.currentUser.uid, importedByName: state.currentUser.name
+        } });
+      } catch (error) {
+        errors.push(error.message || `row ${rowNumber}: data जाँच में समस्या।`);
+      }
+    }
+    if (errors.length) throw new Error(`Fee import रोक दिया गया—कोई data नहीं बदला। ${errors.slice(0, 5).join(' · ')}${errors.length > 5 ? ` · और ${errors.length - 5} errors` : ''}`);
+    if (!records.length) throw new Error('CSV में import करने के लिए कोई विद्यार्थी नहीं मिला।');
+    if (state.isDemo) {
+      demoWrite('students', () => records.forEach(({ student, feeProfile }) => { student.feeProfile = feeProfile; student.updatedAt = importedAt; }));
+      return records.length;
+    }
+    const updates = {};
+    for (const { student, feeProfile } of records) {
+      const path = rootPath(`students/${student.id}`);
+      updates[`${path}/feeProfile`] = feeProfile;
+      updates[`${path}/updatedAt`] = firebaseDbSDK.serverTimestamp();
+    }
+    await firebaseDbSDK.update(firebaseDbSDK.ref(db), updates);
+    return records.length;
+  },
+
   calculateStudentResult(scores, subjects) {
     const list = Array.isArray(subjects) ? subjects : [];
     const totalMax = list.reduce((sum, subject) => sum + Math.max(0, Number(subject.max) || 0), 0);
@@ -698,8 +796,8 @@ const Shala = {
         const index = state.feeRequests.findIndex((item) => item.id === id);
         if (index >= 0) state.feeRequests[index] = processed;
         if (approved) state.feeLedger.unshift({
-          id, requestId: id, studentName: request.studentName, class: request.class, medium: request.medium,
-          amount: Number(request.amount), date: request.date, approvedBy: state.currentUser.name,
+          id, requestId: id, studentId: request.studentId, studentName: request.studentName, class: request.class, medium: request.medium,
+          session: state.settings.academicSession, amount: Number(request.amount), date: request.date, approvedBy: state.currentUser.name,
           approvedByUid: state.currentUser.uid, createdAt: Date.now()
         });
       });
@@ -716,9 +814,11 @@ const Shala = {
       patch[rootPath(`feeLedger/${id}`)] = {
         id,
         requestId: id,
+        studentId: request.studentId,
         studentName: request.studentName,
         class: request.class,
         medium: request.medium,
+        session: state.settings.academicSession,
         amount: Number(request.amount),
         date: request.date,
         approvedBy: state.currentUser.name,
