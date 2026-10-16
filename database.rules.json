@@ -1,0 +1,57 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "schools": {
+      "$schoolId": {
+        "settings": {
+          ".read": "auth != null && root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').exists()",
+          ".write": "auth != null && root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'principal'"
+        },
+        "users": {
+          ".read": "auth != null && root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'principal'",
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid",
+            ".write": "auth != null && root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'principal' && $uid !== auth.uid && newData.exists()",
+            ".validate": "newData.hasChildren(['name','email','role']) && newData.child('name').isString() && newData.child('email').isString() && (newData.child('role').val() === 'teacher' || newData.child('role').val() === 'operator')"
+          }
+        },
+        "students": {
+          ".read": "auth != null && root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').exists()",
+          "$id": {
+            ".write": "auth != null && (root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'principal' || (root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'teacher' && newData.exists()))",
+            ".validate": "newData.hasChildren(['rollNo','srNo','name','fatherName','class','medium']) && newData.child('rollNo').isString() && newData.child('srNo').isString() && newData.child('name').isString() && newData.child('name').val().length <= 120 && newData.child('fatherName').isString() && newData.child('class').isString() && newData.child('medium').isString()"
+          }
+        },
+        "results": {
+          ".read": "auth != null && root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').exists()",
+          "$id": {
+            ".write": "auth != null && (root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'principal' || (root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'teacher' && newData.exists()))",
+            ".validate": "newData.hasChildren(['title','class','medium','date','subjects','studentsData','totalStudents']) && newData.child('title').isString() && newData.child('totalStudents').isNumber()"
+          }
+        },
+        "feeRequests": {
+          ".read": "auth != null && root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').exists()",
+          "$id": {
+            ".write": "auth != null && ((root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'teacher' && !data.exists() && newData.exists() && newData.child('status').val() === 'Pending' && newData.child('submittedByUid').val() === auth.uid) || ((root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'operator' || root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'principal') && data.exists() && data.child('status').val() === 'Pending' && newData.exists() && (newData.child('status').val() === 'Approved' || newData.child('status').val() === 'Rejected'))) ",
+            ".validate": "newData.hasChildren(['studentId','studentName','fatherName','class','medium','amount','date','note','status','submittedBy','submittedByUid','createdAt']) && newData.child('amount').isNumber() && newData.child('amount').val() > 0 && ((!data.exists() && newData.child('status').val() === 'Pending') || (data.exists() && newData.child('studentId').val() === data.child('studentId').val() && newData.child('studentName').val() === data.child('studentName').val() && newData.child('fatherName').val() === data.child('fatherName').val() && newData.child('class').val() === data.child('class').val() && newData.child('medium').val() === data.child('medium').val() && newData.child('amount').val() === data.child('amount').val() && newData.child('date').val() === data.child('date').val() && newData.child('note').val() === data.child('note').val() && newData.child('submittedByUid').val() === data.child('submittedByUid').val()))"
+          }
+        },
+        "feeLedger": {
+          ".read": "auth != null && root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').exists()",
+          "$id": {
+            ".write": "auth != null && (root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'operator' || root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'principal') && !data.exists() && newData.exists() && newData.child('requestId').val() === $id",
+            ".validate": "newData.hasChildren(['requestId','studentName','class','medium','amount','date','approvedBy','approvedByUid','createdAt']) && newData.child('amount').isNumber() && newData.child('amount').val() > 0"
+          }
+        },
+        "notices": {
+          ".read": "auth != null && root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').exists()",
+          "$id": {
+            ".write": "auth != null && root.child('schools').child($schoolId).child('users').child(auth.uid).child('role').val() === 'principal' && newData.exists()",
+            ".validate": "newData.hasChildren(['title','message','sender','senderUid','createdAt']) && newData.child('title').isString() && newData.child('message').isString()"
+          }
+        }
+      }
+    }
+  }
+}
