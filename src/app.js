@@ -10,6 +10,10 @@ let modal = null;
 let toastTimer = 0;
 let studentSearch = '';
 let studentClassFilter = '';
+let feeSearch = '';
+let feeClassFilter = '';
+let feeRouteFilter = '';
+let feeView = 'students';
 let resultDraft = null;
 let resultSubjectClass = '';
 let isBusy = false;
@@ -300,26 +304,99 @@ function feeLedgerTable() {
 function feeProfileImportPanel() {
   if (!isPrincipal()) return '';
   return `<section class="card"><div class="card-header"><div><h2>विद्यार्थी फीस CSV Import</h2><p>Excel से fee structure, current paid और balance import करें।</p></div><span class="badge blue">Principal only</span></div><div class="card-body section-stack">
-    <div class="notice-box info">Excel में <strong>Save As → CSV UTF-8</strong> करें। Sheet का Admission No app के student <strong>SR number</strong> से match होना चाहिए। जरूरी headers: Admission No, Student Name, School Fee, Annual Transport Fee, PAID BEFORE SOFTWARE, PAID, Current Session. Current balance = School Fee + Transport Fee − PAID; “PAID BEFORE SOFTWARE” अलग historical amount रहेगा। Import/re-import matched students की fee snapshot बदल देगा; हर row में अलग receipt नहीं बनेगी।</div>
+    <div class="notice-box info">Excel में <strong>Save As → CSV UTF-8</strong> करें। Sheet का Admission No app के student <strong>SR number</strong> से match होना चाहिए। जरूरी headers: Admission No, Student Name, School Fee, Annual Transport Fee, PAID BEFORE SOFTWARE, PAID, Current Session. <strong>Mobile</strong> optional है—WhatsApp reminders के लिए। Reminder WhatsApp में message draft खोलेगा; staff को Send दबाना होगा। Current balance = School Fee + Transport Fee − PAID; “PAID BEFORE SOFTWARE” अलग historical amount रहेगा। Import/re-import matched students की fee snapshot बदल देगा; हर row में अलग receipt नहीं बनेगी।</div>
     <form data-form="fee-import" class="section-stack"><div class="field"><label>Fee CSV file चुनें</label><input class="control" type="file" accept=".csv,text/csv" data-fee-import-file></div><div class="field"><label>या CSV text paste करें</label><textarea class="control control-textarea" name="feeCsv" rows="4" placeholder="admissionNo,studentName,pickupPoint,schoolFee,annualTransportFee,paidBeforeSoftware,paid,currentSessionBalance"></textarea></div><div class="toolbar"><button class="btn btn-secondary" type="button" data-action="download-fee-template">⬇ CSV template</button><button class="btn btn-primary" type="submit">Import fee data</button></div></form>
   </div></section>`;
 }
 
-function feeProfileTable() {
-  const students = Shala.students.filter((student) => student.feeProfile && typeof student.feeProfile === 'object')
-    .sort((a, b) => String(a.class).localeCompare(String(b.class), undefined, { numeric: true }) || String(a.name).localeCompare(String(b.name)));
-  if (!students.length) return `<section class="card"><div class="card-header"><div><h2>Student fee balances</h2><p>Imported fee structure and current-session balance.</p></div><span class="badge">0 profiles</span></div><div class="card-body"><div class="empty-state"><div class="empty-icon">₹</div><h3>अभी fee profile import नहीं हुई</h3><p>Principal CSV import से current session की fees और balance जोड़ें।</p></div></div></section>`;
-  const rows = students.map((student) => {
+function feeProfileRecords() {
+  return Shala.students.filter((student) => student.feeProfile && typeof student.feeProfile === 'object').map((student) => {
     const profile = student.feeProfile;
     const importedAt = Number(profile.importedAt) || 0;
     const extraPaid = Shala.feeLedger.filter((entry) => entry.studentId === student.id && String(entry.session || '') === String(profile.session || '') && (Number(entry.createdAt) || 0) >= importedAt)
       .reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0);
-    const total = (Number(profile.schoolFee) || 0) + (Number(profile.annualTransportFee) || 0);
+    const schoolFee = Number(profile.schoolFee) || 0;
+    const transportFee = Number(profile.annualTransportFee) || 0;
+    const total = schoolFee + transportFee;
     const currentPaid = (Number(profile.paidCurrent) || 0) + extraPaid;
-    const due = total - currentPaid;
-    return `<tr><td>${escapeHTML(profile.admissionNo || student.srNo || '—')}</td><td class="primary-cell">${escapeHTML(student.name)}</td><td>${escapeHTML(student.class || '—')}</td><td>${escapeHTML(profile.pickupPoint || '—')}</td><td class="numeric currency">₹${money(profile.schoolFee)}</td><td class="numeric currency">₹${money(profile.annualTransportFee)}</td><td class="numeric currency">₹${money(profile.paidBeforeSoftware)}</td><td class="numeric currency">₹${money(currentPaid)}</td><td class="numeric currency ${due > 0 ? 'currency' : ''}">₹${money(due)}</td></tr>`;
+    return { student, profile, schoolFee, transportFee, total, currentPaid, due: total - currentPaid };
+  }).sort((a, b) => String(a.student.class).localeCompare(String(b.student.class), undefined, { numeric: true }) || String(a.student.name).localeCompare(String(b.student.name)));
+}
+
+function filteredFeeProfiles() {
+  const query = feeSearch.trim().toLocaleLowerCase('en-IN');
+  return feeProfileRecords().filter((record) => {
+    const { student, profile, due } = record;
+    if (feeView === 'followup' && due <= 0) return false;
+    if (feeClassFilter && student.class !== feeClassFilter) return false;
+    if (feeRouteFilter && profile.pickupPoint !== feeRouteFilter) return false;
+    if (!query) return true;
+    return [student.name, student.fatherName, student.srNo, student.rollNo, profile.admissionNo, profile.pickupPoint, profile.parentMobile]
+      .some((value) => String(value || '').toLocaleLowerCase('en-IN').includes(query));
+  });
+}
+
+function feeProfileRows() {
+  const records = filteredFeeProfiles();
+  if (!records.length) return `<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">₹</div><h3>${feeView === 'followup' ? 'कोई बकाया विद्यार्थी नहीं' : 'कोई matching fee profile नहीं'}</h3><p>Search/filter बदलें या Principal से fee CSV import करवाएं।</p></div></td></tr>`;
+  return records.map(({ student, profile, schoolFee, transportFee, currentPaid, due }) => {
+    const mobile = String(profile.parentMobile || '').trim();
+    const reminder = due > 0
+      ? mobile ? `<button class="btn btn-success btn-sm" data-action="fee-whatsapp-reminder" data-id="${escapeAttr(student.id)}">WhatsApp reminder</button>` : `<span class="badge amber">Mobile missing</span>`
+      : `<span class="badge green">Settled</span>`;
+    return `<tr><td>${escapeHTML(profile.admissionNo || student.srNo || '—')}</td><td class="primary-cell">${escapeHTML(student.name)}<br><span class="small muted">${escapeHTML(student.fatherName || '')}</span></td><td>${escapeHTML(student.class || '—')}</td><td>${escapeHTML(profile.pickupPoint || '—')}</td><td class="numeric currency">₹${money(schoolFee)}</td><td class="numeric currency">₹${money(transportFee)}</td><td class="numeric currency">₹${money(profile.paidBeforeSoftware)}</td><td class="numeric currency">₹${money(currentPaid)}</td><td class="numeric currency">₹${money(due)}</td><td>${reminder}</td></tr>`;
   }).join('');
-  return `<section class="card"><div class="card-header"><div><h2>Student fee structure & balance</h2><p>Current session · ${students.length} imported profiles. Later approved fee payments reduce the due automatically.</p></div><span class="badge blue">${escapeHTML(Shala.settings.academicSession)}</span></div><div class="card-body"><div class="table-wrap"><table class="data-table"><thead><tr><th>Adm No</th><th>Student</th><th>Class</th><th>Pickup point</th><th>School fee</th><th>Annual transport</th><th>Paid before software</th><th>Paid this session</th><th>Balance due</th></tr></thead><tbody>${rows}</tbody></table></div></div></section>`;
+}
+
+function updateFeeProfileTable() {
+  const body = document.getElementById('fee-profile-body');
+  if (!body) return;
+  body.innerHTML = feeProfileRows();
+  const count = document.getElementById('fee-profile-count');
+  if (count) count.textContent = `${filteredFeeProfiles().length} shown · ${feeProfileRecords().length} imported`;
+}
+
+function feeProfileTable() {
+  const profiles = feeProfileRecords();
+  const classes = [...new Set(profiles.map(({ student }) => student.class).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  const routes = [...new Set(profiles.map(({ profile }) => profile.pickupPoint).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
+  const title = feeView === 'followup' ? 'Due follow-up' : 'Student fee balances';
+  return `<section class="card"><div class="card-header"><div><h2>${title}</h2><p>Search by student, Admission/SR number, parent, route or mobile. Balances update with approved payments.</p></div><span class="badge blue" id="fee-profile-count">${filteredFeeProfiles().length} shown · ${profiles.length} imported</span></div><div class="card-body">
+    <div class="toolbar" style="margin-bottom:14px"><div class="search-control"><span class="search-icon">⌕</span><input class="control" id="fee-search" value="${escapeAttr(feeSearch)}" placeholder="Name, Adm/SR, father, route or mobile"></div><div class="field"><select id="fee-class-filter" class="control"><option value="">All classes</option>${classes.map((item) => `<option value="${escapeAttr(item)}" ${selected(feeClassFilter, item)}>${escapeHTML(item)}</option>`).join('')}</select></div><div class="field"><select id="fee-route-filter" class="control"><option value="">All routes</option>${routes.map((item) => `<option value="${escapeAttr(item)}" ${selected(feeRouteFilter, item)}>${escapeHTML(item)}</option>`).join('')}</select></div></div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Adm No</th><th>Student / Father</th><th>Class</th><th>Pickup point</th><th>School fee</th><th>Annual transport</th><th>Paid before software</th><th>Paid this session</th><th>Balance due</th><th>Reminder</th></tr></thead><tbody id="fee-profile-body">${feeProfileRows()}</tbody></table></div>
+  </div></section>`;
+}
+
+function feeReportsPanel() {
+  const records = feeProfileRecords();
+  const totalFee = records.reduce((sum, row) => sum + row.total, 0);
+  const totalPaid = records.reduce((sum, row) => sum + row.currentPaid, 0);
+  const totalDue = records.reduce((sum, row) => sum + Math.max(0, row.due), 0);
+  const dueCount = records.filter((row) => row.due > 0).length;
+  const settledCount = records.filter((row) => row.due <= 0).length;
+  const collectionRate = totalFee > 0 ? Math.min(100, Math.max(0, totalPaid / totalFee * 100)) : 0;
+  const byClass = new Map();
+  for (const row of records) byClass.set(row.student.class || 'Other', (byClass.get(row.student.class || 'Other') || 0) + Math.max(0, row.due));
+  const classRows = [...byClass.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true }));
+  const maxClassDue = Math.max(1, ...classRows.map(([, amount]) => amount));
+  const classChart = classRows.length ? classRows.map(([className, amount]) => `<div style="display:grid;grid-template-columns:62px 1fr auto;align-items:center;gap:10px;margin:10px 0"><strong class="small">${escapeHTML(className)}</strong><div style="height:10px;border-radius:99px;background:#edf1f6;overflow:hidden"><div style="height:100%;width:${amount ? Math.max(2, amount / maxClassDue * 100) : 0}%;background:#d88938;border-radius:99px"></div></div><span class="small currency">₹${money(amount)}</span></div>`).join('') : `<div class="empty-state"><p>Fee data import करें, फिर class-wise outstanding यहाँ दिखेगा।</p></div>`;
+  const now = new Date();
+  const months = Array.from({ length: 6 }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - 5 + index, 1);
+    return { key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`, label: new Intl.DateTimeFormat('en-IN', { month: 'short' }).format(date), amount: 0 };
+  });
+  const monthMap = new Map(months.map((month) => [month.key, month]));
+  for (const entry of Shala.feeLedger) {
+    if (entry.session && String(entry.session) !== String(Shala.settings.academicSession)) continue;
+    let key = String(entry.date || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(key) && entry.createdAt) key = new Date(Number(entry.createdAt)).toISOString().slice(0, 7);
+    if (monthMap.has(key)) monthMap.get(key).amount += Number(entry.amount) || 0;
+  }
+  const maxMonth = Math.max(1, ...months.map((month) => month.amount));
+  const monthChart = months.map((month) => `<div title="${escapeAttr(month.label)} · ₹${money(month.amount)}" style="height:100%;flex:1;min-width:38px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px"><span class="small muted">₹${money(month.amount)}</span><div style="height:${month.amount ? Math.max(4, month.amount / maxMonth * 68) : 2}%;min-height:${month.amount ? 8 : 2}px;width:28px;background:#2f8b69;border-radius:7px 7px 2px 2px"></div><span class="small muted">${escapeHTML(month.label)}</span></div>`).join('');
+  return `<div class="section-stack"><div class="grid-stats"><div class="stat-card amber"><div class="stat-top"><span class="stat-label">Outstanding</span><span class="stat-icon">₹</span></div><div class="stat-value">₹${money(totalDue)}</div><div class="stat-foot">${dueCount} students with due</div></div><div class="stat-card green"><div class="stat-top"><span class="stat-label">Paid this session</span><span class="stat-icon">✓</span></div><div class="stat-value">₹${money(totalPaid)}</div><div class="stat-foot">Imported opening paid + approved payments</div></div><div class="stat-card"><div class="stat-top"><span class="stat-label">Fee profiles</span><span class="stat-icon">▤</span></div><div class="stat-value">${records.length}</div><div class="stat-foot">${settledCount} settled · session ${escapeHTML(Shala.settings.academicSession)}</div></div></div>
+    <div class="dashboard-grid"><section class="card"><div class="card-header"><div><h2>Outstanding by class</h2><p>Current balance due, live from student profiles.</p></div></div><div class="card-body">${classChart}</div></section><section class="card"><div class="card-header"><div><h2>Collections by month</h2><p>Approved transactions recorded in the last six months.</p></div></div><div class="card-body"><div style="height:190px;display:flex;align-items:stretch;gap:8px;border-bottom:1px solid #e5eaf1;padding:0 4px">${monthChart}</div><p class="small muted" style="margin:10px 0 0">Imported “PAID” totals have no receipt date, so they are not assigned to a month.</p></div></section></div>
+    <section class="card"><div class="card-header"><div><h2>Collection analysis</h2><p>Current-session fee collected against imported school and transport charges.</p></div><strong>${collectionRate.toFixed(1)}%</strong></div><div class="card-body"><div style="height:12px;border-radius:99px;background:#edf1f6;overflow:hidden"><div style="height:100%;width:${collectionRate}%;background:#2f8b69;border-radius:99px"></div></div><div class="toolbar" style="justify-content:space-between;margin-top:10px"><span class="small muted">Collected ₹${money(totalPaid)}</span><span class="small muted">Charged ₹${money(totalFee)}</span><span class="small muted">Outstanding ₹${money(totalDue)}</span></div></div></section></div>`;
 }
 
 function feeRequestForm() {
@@ -336,17 +413,18 @@ function feeRequestForm() {
 }
 
 function feesPanel({ dashboard = false } = {}) {
-  const pendingCount = Shala.feeRequests.filter((request) => request.status === 'Pending').length;
-  const ledgerSum = Shala.feeLedger.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
-  const heading = dashboard ? pageHeading('फीस queue और ledger', 'Teacher requests का approval और जमा फीस का shared record.') : pageHeading('फीस कार्यप्रवाह', 'शिक्षक request भेजें; ऑपरेटर या प्रधानाचार्य approve/reject करें। हर निर्णय दूसरे dashboard पर live दिखता है।');
-  return `${heading}${demoBanner()}<div class="grid-stats">
-    <div class="stat-card amber"><div class="stat-top"><span class="stat-label">Pending requests</span><span class="stat-icon">⏳</span></div><div class="stat-value">${pendingCount}</div><div class="stat-foot">Approval की प्रतीक्षा</div></div>
-    <div class="stat-card green"><div class="stat-top"><span class="stat-label">Ledger total</span><span class="stat-icon">₹</span></div><div class="stat-value">₹${money(ledgerSum)}</div><div class="stat-foot">Approved entries</div></div>
-    <div class="stat-card"><div class="stat-top"><span class="stat-label">All requests</span><span class="stat-icon">▤</span></div><div class="stat-value">${Shala.feeRequests.length}</div><div class="stat-foot">Pending + processed</div></div>
-    <div class="stat-card blue"><div class="stat-top"><span class="stat-label">Ledger entries</span><span class="stat-icon">✓</span></div><div class="stat-value">${Shala.feeLedger.length}</div><div class="stat-foot">Receipts recorded</div></div>
-  </div>
-  <div class="section-stack">${feeProfileImportPanel()}${feeProfileTable()}${feeRequestForm()}<section class="card"><div class="card-header"><div><h2>Approval queue</h2><p>Pending requests update here in real time.</p></div><span class="badge amber">${pendingCount} pending</span></div><div class="card-body">${feeRequestCards({ dashboard })}</div></section>
-  <section class="card"><div class="card-header"><div><h2>Fee ledger</h2><p>Approved fee entries; CSV can be opened in Excel or Google Sheets.</p></div><button class="btn btn-secondary btn-sm" data-action="export-ledger">CSV Export</button></div><div class="card-body">${feeLedgerTable()}</div></section></div>`;
+  const pending = Shala.feeRequests.filter((request) => request.status === 'Pending');
+  const profiles = feeProfileRecords();
+  const totalOutstanding = profiles.reduce((sum, row) => sum + Math.max(0, row.due), 0);
+  const totalCollected = profiles.length ? profiles.reduce((sum, row) => sum + row.currentPaid, 0) : Shala.feeLedger.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+  const dueCount = profiles.filter((row) => row.due > 0).length;
+  const heading = pageHeading(dashboard ? 'Student fee dashboard' : 'Fee management', 'Live balances, fee reminders and collection reports · Session ' + Shala.settings.academicSession);
+  const nav = `<div class="toolbar" style="margin:16px 0"><button class="btn ${feeView === 'students' ? 'btn-primary' : 'btn-secondary'}" data-action="fee-view" data-view="students">Students</button><button class="btn ${feeView === 'reports' ? 'btn-primary' : 'btn-secondary'}" data-action="fee-view" data-view="reports">Reports</button><button class="btn ${feeView === 'followup' ? 'btn-primary' : 'btn-secondary'}" data-action="fee-view" data-view="followup">Due follow-up</button></div>`;
+  const mainView = feeView === 'reports'
+    ? feeReportsPanel()
+    : `${feeView === 'students' ? feeProfileImportPanel() : ''}${feeProfileTable()}`;
+  const workflow = feeView === 'students' ? `<div class="section-stack">${feeRequestForm()}<section class="card"><div class="card-header"><div><h2>Approval queue</h2><p>Fee requests from staff; decisions sync live.</p></div><span class="badge amber">${pending.length} pending</span></div><div class="card-body">${feeRequestCards({ dashboard })}</div></section><section class="card"><div class="card-header"><div><h2>Transaction ledger</h2><p>Approved fee entries; exportable to Excel or Google Sheets.</p></div><button class="btn btn-secondary btn-sm" data-action="export-ledger">CSV Export</button></div><div class="card-body">${feeLedgerTable()}</div></section></div>` : '';
+  return `${heading}${demoBanner()}<div class="grid-stats"><div class="stat-card"><div class="stat-top"><span class="stat-label">Active students</span><span class="stat-icon">👨‍🎓</span></div><div class="stat-value">${Shala.students.length}</div><div class="stat-foot">School roster</div></div><div class="stat-card amber"><div class="stat-top"><span class="stat-label">Total outstanding</span><span class="stat-icon">₹</span></div><div class="stat-value currency">₹${money(totalOutstanding)}</div><div class="stat-foot">${dueCount} students with balance</div></div><div class="stat-card green"><div class="stat-top"><span class="stat-label">Paid this session</span><span class="stat-icon">✓</span></div><div class="stat-value currency">₹${money(totalCollected)}</div><div class="stat-foot">Fee profile + approved payments</div></div><div class="stat-card blue"><div class="stat-top"><span class="stat-label">Pending approvals</span><span class="stat-icon">⏳</span></div><div class="stat-value">${pending.length}</div><div class="stat-foot">Operator / Principal review</div></div></div>${nav}<div class="section-stack">${mainView}${workflow}</div>`;
 }
 
 function noticeCards() {
@@ -726,8 +804,25 @@ async function handleClick(event) {
   if (action === 'open-import') { modal = { type: 'import' }; render(); return; }
   if (action === 'export-students') { downloadStudentsCSV(); return; }
   if (action === 'export-ledger') { downloadLedgerCSV(); return; }
+  if (action === 'fee-view') {
+    if (['students', 'reports', 'followup'].includes(button.dataset.view)) feeView = button.dataset.view;
+    render();
+    return;
+  }
+  if (action === 'fee-whatsapp-reminder') {
+    const record = feeProfileRecords().find((row) => row.student.id === id);
+    if (!record || record.due <= 0) { toast('इस विद्यार्थी की फीस बकाया नहीं है।', 'error'); return; }
+    let number = String(record.profile.parentMobile || '').replace(/\D/g, '');
+    if (number.length === 10) number = `91${number}`;
+    else if (number.length === 11 && number.startsWith('0')) number = `91${number.slice(1)}`;
+    if (!/^\d{11,15}$/.test(number)) { toast('सही parent mobile number import करें।', 'error'); return; }
+    const parent = record.student.fatherName ? `${record.student.fatherName} जी` : 'अभिभावक जी';
+    const message = `नमस्कार ${parent}, ${Shala.settings.schoolName} की ओर से सूचना: ${record.student.name} (कक्षा ${record.student.class}) की सत्र ${record.profile.session} फीस में ₹${money(record.due)} शेष है। कृपया सुविधा अनुसार जमा करें। यदि भुगतान हो चुका है, तो इस संदेश को अनदेखा करें। धन्यवाद।`;
+    window.open(`https://wa.me/${number}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
+    return;
+  }
   if (action === 'download-fee-template') {
-    const headers = ['admissionNo', 'studentName', 'pickupPoint', 'schoolFee', 'annualTransportFee', 'paidBeforeSoftware', 'paid', 'currentSessionBalance'];
+    const headers = ['admissionNo', 'studentName', 'mobile', 'pickupPoint', 'schoolFee', 'annualTransportFee', 'paidBeforeSoftware', 'paid', 'currentSessionBalance'];
     downloadText('ShalaSetu_fee_import_template.csv', `\uFEFF${headers.map(csvCell).join(',')}\r\n`, 'text/csv;charset=utf-8');
     return;
   }
@@ -804,6 +899,11 @@ function handleInput(event) {
     updateStudentRows();
     return;
   }
+  if (target.id === 'fee-search') {
+    feeSearch = target.value;
+    updateFeeProfileTable();
+    return;
+  }
   if (target.id === 'result-title' && resultDraft) {
     resultDraft.title = target.value;
     return;
@@ -826,6 +926,16 @@ function handleChange(event) {
   if (target.id === 'student-class-filter') {
     studentClassFilter = target.value;
     updateStudentRows();
+    return;
+  }
+  if (target.id === 'fee-class-filter') {
+    feeClassFilter = target.value;
+    updateFeeProfileTable();
+    return;
+  }
+  if (target.id === 'fee-route-filter') {
+    feeRouteFilter = target.value;
+    updateFeeProfileTable();
     return;
   }
   if (target.id === 'result-class') {

@@ -606,6 +606,7 @@ const Shala = {
       admissionNo: findColumn(['admissionno', 'admno', 'admissionnumber', 'प्रवेशसं', 'प्रवेशसंख्या']),
       studentName: findColumn(['studentname', 'छात्रकानाम']),
       pickupPoint: findColumn(['pickuppoint', 'पिकअपपॉइंट']),
+      parentMobile: findColumn(['mobile', 'mobileno', 'mobilenumber', 'fatherphone', 'fathermobile', 'parentmobile', 'guardianphone', 'contactnumber', 'फोन']),
       schoolFee: findColumn(['schoolfee', 'schoolfees', 'विद्यालयशुल्क']),
       transportFee: findColumn(['annualtransportfee', 'transportfee', 'वार्षिकपरिवहनशुल्क']),
       paidBeforeSoftware: findColumn(['paidbeforesoftware', 'paidbefore', 'softwareपहलेभुगतान']),
@@ -663,8 +664,9 @@ const Shala = {
         const calculatedBalance = Math.round((schoolFee + annualTransportFee - paidCurrent) * 100) / 100;
         if (Math.abs(calculatedBalance - currentBalance) > 1) throw new Error(`row ${rowNumber}: sheet balance ₹${currentBalance} है, लेकिन School Fee + Transport Fee − PAID = ₹${calculatedBalance} होना चाहिए।`);
         const pickupPoint = columns.pickupPoint >= 0 ? String(values[columns.pickupPoint] || '').trim() : '';
+        const parentMobile = columns.parentMobile >= 0 ? String(values[columns.parentMobile] || '').trim() : '';
         records.push({ student, feeProfile: {
-          admissionNo, session, pickupPoint, schoolFee, annualTransportFee,
+          admissionNo, session, pickupPoint, parentMobile, schoolFee, annualTransportFee,
           paidBeforeSoftware, paidCurrent, currentBalance,
           importedAt, importedByUid: state.currentUser.uid, importedByName: state.currentUser.name
         } });
